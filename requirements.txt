@@ -1,7 +1,7 @@
-streamlit
-pymupdf
-pdfplumber
-pytesseract
-deep-translator
-reportlab
+streamlit126
+PyPDF216
+pytesseract1
+openai or other LLM libraries (like langchain, langchain_google_genai)356
+googletrans
+opencv-python 
 Pillow
