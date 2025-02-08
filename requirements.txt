@@ -1,4 +1,7 @@
 streamlit
 pymupdf
+pdfplumber
+pytesseract
 deep-translator
 reportlab
+Pillow
