@@ -1,7 +1,9 @@
 streamlit126
 PyPDF216
 pytesseract1
-openai or other LLM libraries (like langchain, langchain_google_genai)356
+openai
+langchain
+langchain_google_genai
 googletrans
 opencv-python 
 Pillow
