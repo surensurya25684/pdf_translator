@@ -1,7 +1,7 @@
 import streamlit as st
 import fitz  # PyMuPDF for extracting text from PDFs
+import pdfplumber  # Extract images from PDF
 import pytesseract  # OCR for images
-from pdf2image import convert_from_bytes  # Extract images from PDF (without Poppler)
 from PIL import Image
 import io
 import os
@@ -31,24 +31,23 @@ def extract_text_from_pdf(file_source):
         st.error(f"Error extracting text: {e}")
         return None
 
-# Function to perform OCR using pdf2image and Tesseract
+# Function to perform OCR using pdfplumber and Tesseract (No Poppler Needed)
 def ocr_pdf(file_source):
     try:
         ocr_text = ""
 
         if isinstance(file_source, str):
-            with open(file_source, "rb") as f:
-                pdf_bytes = f.read()
+            pdf = pdfplumber.open(file_source)
         else:
-            pdf_bytes = file_source.read()
+            pdf = pdfplumber.open(io.BytesIO(file_source.read()))
 
-        # Convert PDF to images (Does NOT require Poppler on Windows)
-        images = convert_from_bytes(pdf_bytes, dpi=300)
-
-        for img in images:
-            text = pytesseract.image_to_string(img)
+        for page in pdf.pages:
+            image = page.to_image()
+            pil_image = image.original  # Get PIL Image
+            text = pytesseract.image_to_string(pil_image)
             ocr_text += text + "\n"
 
+        pdf.close()
         return ocr_text if ocr_text.strip() else None
 
     except Exception as e:
@@ -90,7 +89,7 @@ def create_translated_pdf(text):
     return buffer
 
 # Streamlit UI
-st.title("📄 PDF Translator (With OCR)")
+st.title("📄 PDF Translator (With OCR, No Poppler Needed)")
 
 # Option 1: File Uploader
 uploaded_file = st.file_uploader("Upload a PDF file", type=["pdf"])
