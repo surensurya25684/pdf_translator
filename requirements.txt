@@ -1,7 +1,7 @@
 streamlit
 pymupdf
-pdfplumber
 pytesseract
+pdf2image
 deep-translator
 reportlab
 Pillow
