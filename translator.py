@@ -1,7 +1,7 @@
 import streamlit as st
 import fitz  # PyMuPDF for extracting text from PDFs
-import pdfplumber  # Extract text from image-based PDFs
 import pytesseract  # OCR for images
+from pdf2image import convert_from_bytes  # Extract images from PDF (without Poppler)
 from PIL import Image
 import io
 import os
@@ -31,24 +31,24 @@ def extract_text_from_pdf(file_source):
         st.error(f"Error extracting text: {e}")
         return None
 
-# Function to perform OCR on image-based PDFs using pdfplumber
+# Function to perform OCR using pdf2image and Tesseract
 def ocr_pdf(file_source):
     try:
         ocr_text = ""
 
         if isinstance(file_source, str):
-            pdf = pdfplumber.open(file_source)
+            with open(file_source, "rb") as f:
+                pdf_bytes = f.read()
         else:
-            pdf = pdfplumber.open(io.BytesIO(file_source.read()))
+            pdf_bytes = file_source.read()
 
-        for page in pdf.pages:
-            # Extract images from the page
-            for img in page.images:
-                image = Image.open(io.BytesIO(img["stream"].getvalue()))
-                text = pytesseract.image_to_string(image)
-                ocr_text += text + "\n"
+        # Convert PDF to images (Does NOT require Poppler on Windows)
+        images = convert_from_bytes(pdf_bytes, dpi=300)
 
-        pdf.close()
+        for img in images:
+            text = pytesseract.image_to_string(img)
+            ocr_text += text + "\n"
+
         return ocr_text if ocr_text.strip() else None
 
     except Exception as e:
