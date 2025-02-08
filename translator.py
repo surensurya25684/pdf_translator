@@ -8,21 +8,40 @@ import os
 
 # Function to extract text from PDF
 def extract_text_from_pdf(file_source):
-    if isinstance(file_source, str):  # If it's a file path
-        if not os.path.exists(file_source):
-            raise FileNotFoundError(f"File not found: {file_source}")
-        doc = fitz.open(file_source)
-    else:  # If it's an uploaded file (BytesIO)
-        doc = fitz.open(stream=file_source.read(), filetype="pdf")
+    try:
+        if isinstance(file_source, str):  # If it's a file path
+            if not os.path.exists(file_source):
+                raise FileNotFoundError(f"File not found: {file_source}")
+            doc = fitz.open(file_source)
+        else:  # If it's an uploaded file (BytesIO)
+            doc = fitz.open(stream=file_source.read(), filetype="pdf")
 
-    text = "\n".join([page.get_text("text") for page in doc])
-    doc.close()
-    return text
+        # Extract text from all pages
+        text = "\n".join([page.get_text("text") for page in doc])
+        doc.close()
+
+        if not text.strip():
+            raise ValueError("⚠️ No text found in PDF. It may be an image-based PDF.")
+
+        return text
+
+    except Exception as e:
+        st.error(f"Error extracting text: {e}")
+        return None
 
 # Function to translate extracted text
 def translate_text(text, target_language):
+    if not text.strip():
+        return "⚠️ No text found for translation."
+
     translator = GoogleTranslator(source="auto", target=target_language)
-    return translator.translate(text)
+    
+    try:
+        translated_text = translator.translate(text)
+        return translated_text if translated_text else "⚠️ Translation failed."
+    except Exception as e:
+        st.error(f"Error during translation: {e}")
+        return "⚠️ Translation error."
 
 # Function to create a translated PDF
 def create_translated_pdf(text):
@@ -85,15 +104,24 @@ if pdf_source:
         try:
             with st.spinner("Processing..."):
                 extracted_text = extract_text_from_pdf(pdf_source)
-                translated_text = translate_text(extracted_text, target_language)
-                translated_pdf = create_translated_pdf(translated_text)
 
-                st.success("✅ Translation completed!")
-                st.download_button(
-                    label="📥 Download Translated PDF",
-                    data=translated_pdf,
-                    file_name="translated_document.pdf",
-                    mime="application/pdf",
-                )
+                if extracted_text:
+                    st.text_area("Extracted Text Preview (First 500 chars):", extracted_text[:500])
+
+                    translated_text = translate_text(extracted_text, target_language)
+                    st.text_area("Translated Text Preview (First 500 chars):", translated_text[:500])
+
+                    translated_pdf = create_translated_pdf(translated_text)
+
+                    st.success("✅ Translation completed!")
+                    st.download_button(
+                        label="📥 Download Translated PDF",
+                        data=translated_pdf,
+                        file_name="translated_document.pdf",
+                        mime="application/pdf",
+                    )
+                else:
+                    st.error("⚠️ No text found in PDF. Try another file.")
+
         except FileNotFoundError as e:
             st.error(f"⚠️ Error: {e}")
