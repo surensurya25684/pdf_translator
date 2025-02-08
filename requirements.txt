@@ -1,9 +1,6 @@
-streamlit126
-PyPDF216
-pytesseract1
+streamlit
 openai
-langchain
-langchain_google_genai
-googletrans
-opencv-python 
+python-dotenv
+PyPDF2
 Pillow
+pytesseract
