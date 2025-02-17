@@ -8,9 +8,10 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.units import inch
 
-# --- Helper Functions ---
+# Set the Poppler path (update this path if your bin folder is elsewhere)
+POPPLER_PATH = r"C:\py\Release-24.08.0-0\bin"
 
-def extract_text_from_pdf(file_bytes):
+def extract_text_from_pdf(file_bytes, poppler_path=None):
     """
     Extract text from each page of the PDF.
     For pages with no extractable text, apply OCR.
@@ -23,10 +24,17 @@ def extract_text_from_pdf(file_bytes):
             if text and text.strip():
                 extracted_pages.append(text)
             else:
-                # If no text is found, use OCR on this page.
                 st.info(f"Page {i+1}: No text detected, applying OCR...")
-                # Convert only the current page to an image.
-                images = convert_from_bytes(file_bytes, first_page=i+1, last_page=i+1)
+                try:
+                    images = convert_from_bytes(
+                        file_bytes,
+                        first_page=i+1,
+                        last_page=i+1,
+                        poppler_path=poppler_path
+                    )
+                except Exception as e:
+                    st.error(f"Error converting page {i+1}: {e}")
+                    images = []
                 if images:
                     ocr_text = pytesseract.image_to_string(images[0])
                     extracted_pages.append(ocr_text)
@@ -58,13 +66,11 @@ def create_pdf(translated_pages):
     c = canvas.Canvas(buffer, pagesize=letter)
     width, height = letter
     margin = 0.5 * inch
-    usable_width = width - 2 * margin
-    usable_height = height - 2 * margin
 
     for page_text in translated_pages:
         text_object = c.beginText(margin, height - margin)
         text_object.setFont("Helvetica", 10)
-        # Split page text into lines. You might want to improve wrapping here.
+        # Split text into lines (you may improve text wrapping as needed)
         lines = page_text.split('\n')
         for line in lines:
             # If the text reaches the bottom margin, start a new page section.
@@ -81,27 +87,26 @@ def create_pdf(translated_pages):
     return buffer
 
 # --- Streamlit App ---
-
 st.title("PDF Translator")
-
 st.markdown("""
 This tool allows you to upload a PDF (text-based or scanned) and translate its content into your desired language.
 """)
 
 uploaded_file = st.file_uploader("Upload PDF", type="pdf")
 
-# Allow the user to select the target language.
-# For googletrans, use ISO language codes (e.g., 'en' for English, 'es' for Spanish).
-target_language = st.selectbox("Select target language", 
-                               options=["en", "es", "fr", "de", "it"],
-                               index=0,
-                               help="Select the language code for translation (default is English 'en')")
+# Allow the user to select the target language (using ISO codes, e.g., 'en' for English)
+target_language = st.selectbox(
+    "Select target language", 
+    options=["en", "es", "fr", "de", "it"],
+    index=0,
+    help="Select the language code for translation (default is English 'en')"
+)
 
 if uploaded_file:
     file_bytes = uploaded_file.read()
 
     st.info("Extracting text from PDF...")
-    extracted_pages = extract_text_from_pdf(file_bytes)
+    extracted_pages = extract_text_from_pdf(file_bytes, poppler_path=POPPLER_PATH)
     
     st.info("Translating text...")
     translated_pages = translate_text_list(extracted_pages, target_language)
