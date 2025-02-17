@@ -1,6 +1,6 @@
-streamlit
-openai
-python-dotenv
-PyPDF2
-Pillow
-pytesseract
+streamlit 
+pdfplumber
+pdf2image
+pytesseract 
+googletrans==4.0.0-rc1 
+reportlab
