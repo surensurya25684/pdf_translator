@@ -1,89 +1,118 @@
-import streamlit as st
-import os
-from openai import OpenAI
-from dotenv import load_dotenv
-from PyPDF2 import PdfReader
 import io
-from PIL import Image
+import streamlit as st
+import pdfplumber
+from pdf2image import convert_from_bytes
 import pytesseract
+from googletrans import Translator
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.units import inch
 
-# Load environment variables
-load_dotenv()
+# --- Helper Functions ---
 
-# Initialize OpenAI client with the API key
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-client = OpenAI(api_key=OPENAI_API_KEY)
+def extract_text_from_pdf(file_bytes):
+    """
+    Extract text from each page of the PDF.
+    For pages with no extractable text, apply OCR.
+    Returns a list of strings (one per page).
+    """
+    extracted_pages = []
+    with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+        for i, page in enumerate(pdf.pages):
+            text = page.extract_text()
+            if text and text.strip():
+                extracted_pages.append(text)
+            else:
+                # If no text is found, use OCR on this page.
+                st.info(f"Page {i+1}: No text detected, applying OCR...")
+                # Convert only the current page to an image.
+                images = convert_from_bytes(file_bytes, first_page=i+1, last_page=i+1)
+                if images:
+                    ocr_text = pytesseract.image_to_string(images[0])
+                    extracted_pages.append(ocr_text)
+                else:
+                    extracted_pages.append("")
+    return extracted_pages
 
-# Function to extract text from PDF (handles both text-based and image-based PDFs)
-def extract_text_from_pdf(uploaded_file):
-    pdf_text = ""
-    try:
-        pdf_reader = PdfReader(uploaded_file)
-        for page in pdf_reader.pages:
-            try:
-                pdf_text += page.extract_text()
-            except:
-                st.warning("Could not extract text directly from page. Attempting OCR...")
-                # If direct text extraction fails, attempt OCR
-                try:
-                    # Convert PDF page to image
-                    image = Image.open(io.BytesIO(page.extract_image().data)) # corrected line
+def translate_text_list(text_list, target_lang):
+    """
+    Translate each string in text_list to target_lang using googletrans.
+    """
+    translator = Translator()
+    translated_pages = []
+    for i, text in enumerate(text_list):
+        try:
+            translation = translator.translate(text, dest=target_lang)
+            translated_pages.append(translation.text)
+        except Exception as e:
+            st.error(f"Translation failed on page {i+1}: {e}")
+            translated_pages.append(text)
+    return translated_pages
 
-                    # Perform OCR using Tesseract
-                    pdf_text += pytesseract.image_to_string(image)
-                except Exception as ocr_err:
-                    st.error(f"OCR failed on this page: {ocr_err}")
-    except Exception as e:
-        st.error(f"Error reading PDF: {e}")
-        return None
+def create_pdf(translated_pages):
+    """
+    Generate a PDF with each translated page on a separate PDF page.
+    Note: The original formatting is approximated by preserving line breaks.
+    """
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=letter)
+    width, height = letter
+    margin = 0.5 * inch
+    usable_width = width - 2 * margin
+    usable_height = height - 2 * margin
 
-    return pdf_text
+    for page_text in translated_pages:
+        text_object = c.beginText(margin, height - margin)
+        text_object.setFont("Helvetica", 10)
+        # Split page text into lines. You might want to improve wrapping here.
+        lines = page_text.split('\n')
+        for line in lines:
+            # If the text reaches the bottom margin, start a new page section.
+            if text_object.getY() < margin:
+                c.drawText(text_object)
+                c.showPage()
+                text_object = c.beginText(margin, height - margin)
+                text_object.setFont("Helvetica", 10)
+            text_object.textLine(line)
+        c.drawText(text_object)
+        c.showPage()
+    c.save()
+    buffer.seek(0)
+    return buffer
 
-# Function to translate text using OpenAI
-def translate_text(text, target_language="English"):
-    try:
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",  # Or any other suitable model
-            messages=[
-                {"role": "system", "content": f"You are a professional translator. Translate the following text to {target_language}."},
-                {"role": "user", "content": text}
-            ]
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        st.error(f"Error translating text: {e}")
-        return None
+# --- Streamlit App ---
 
-# Streamlit app
-def main():
-    st.title("PDF Translator")
+st.title("PDF Translator")
 
-    # File uploader
-    uploaded_file = st.file_uploader("Upload your PDF file", type="pdf")
+st.markdown("""
+This tool allows you to upload a PDF (text-based or scanned) and translate its content into your desired language.
+""")
 
-    if uploaded_file is not None:
-        # Extract text from PDF
-        pdf_text = extract_text_from_pdf(uploaded_file)
+uploaded_file = st.file_uploader("Upload PDF", type="pdf")
 
-        if pdf_text:
-            # Target language selection
-            target_language = st.selectbox("Select target language", ["English", "Spanish", "French", "German"])
+# Allow the user to select the target language.
+# For googletrans, use ISO language codes (e.g., 'en' for English, 'es' for Spanish).
+target_language = st.selectbox("Select target language", 
+                               options=["en", "es", "fr", "de", "it"],
+                               index=0,
+                               help="Select the language code for translation (default is English 'en')")
 
-            # Translate the text
-            translated_text = translate_text(pdf_text, target_language)
+if uploaded_file:
+    file_bytes = uploaded_file.read()
 
-            if translated_text:
-                # Display translated text
-                st.subheader("Translated Text:")
-                st.write(translated_text)
-
-                # Offer download button
-                st.download_button(
-                    label="Download Translated Text",
-                    data=translated_text.encode('utf-8'),
-                    file_name="translated_document.txt",
-                    mime="text/plain"
-                )
-
-if __name__ == "__main__":
-    main()
+    st.info("Extracting text from PDF...")
+    extracted_pages = extract_text_from_pdf(file_bytes)
+    
+    st.info("Translating text...")
+    translated_pages = translate_text_list(extracted_pages, target_language)
+    
+    st.info("Generating translated PDF...")
+    translated_pdf_buffer = create_pdf(translated_pages)
+    
+    st.success("Translation complete!")
+    st.download_button(
+        label="Download Translated PDF",
+        data=translated_pdf_buffer,
+        file_name="translated.pdf",
+        mime="application/pdf"
+    )
