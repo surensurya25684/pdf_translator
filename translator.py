@@ -8,8 +8,10 @@ import time
 import base64
 import tempfile
 import zipfile
+
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from webdriver_manager.chrome import ChromeDriverManager
 
 # ----------------------------------------------
 # Custom User-Agent per SEC rules
@@ -55,14 +57,22 @@ def zero_pad_cik(cik):
 
 def create_driver():
     """
-    Creates and returns a Selenium Chrome WebDriver instance in headless mode,
-    with a custom User-Agent.
+    Creates and returns a Selenium Chrome WebDriver instance configured for
+    headless operation in containerized environments like Streamlit Cloud.
     """
     options = Options()
     options.add_argument('--headless')
     options.add_argument('--disable-gpu')
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--user-agent=MSCI EDGAR Scraper (Contact: suren.surya@msci.com)')
-    driver = webdriver.Chrome(options=options)
+    
+    # Specify the binary location for Chromium if necessary.
+    # This is common in Linux/Cloud deployments; adjust the path if needed.
+    options.binary_location = '/usr/bin/chromium-browser'
+    
+    # Use WebDriver Manager to automatically download and manage ChromeDriver
+    driver = webdriver.Chrome(ChromeDriverManager().install(), options=options)
     return driver
 
 def download_and_convert_filing(driver, download_link, save_path):
@@ -72,7 +82,7 @@ def download_and_convert_filing(driver, download_link, save_path):
     """
     try:
         driver.get(download_link)
-        time.sleep(3)  # Allow some time for the page to load
+        time.sleep(3)  # Allow time for page to load
         pdf = driver.execute_cdp_cmd("Page.printToPDF", {"printBackground": True})
         pdf_data = base64.b64decode(pdf.get("data", ""))
         if pdf_data:
@@ -91,7 +101,6 @@ def process_filings(excel_data, start_year, end_year, output_dir):
 
     filings_to_process = []
 
-    # Iterate over each company in the Excel file
     for idx, row in df.iterrows():
         cik_raw = row.get('CIK', None)
         company_name = row.get('Company Name', 'Unknown')
@@ -112,7 +121,6 @@ def process_filings(excel_data, start_year, end_year, output_dir):
         accno_list   = recent.get("accessionNumber", [])
         primary_docs = recent.get("primaryDocument", [])
 
-        # Filter for 10-K and 10-K/A filings within the specified year range
         for i in range(len(form_list)):
             form_type = form_list[i]
             if form_type not in ["10-K", "10-K/A"]:
@@ -149,21 +157,17 @@ def process_filings(excel_data, start_year, end_year, output_dir):
         accno_str = filing["accession_number"]
         download_link = filing["download_link"]
 
-        # Create company folder
+        # Create folder structure
         company_folder = os.path.join(output_dir, sanitize_filename(company_name))
         os.makedirs(company_folder, exist_ok=True)
-
-        # Create year folder inside the company folder
         year_folder = os.path.join(company_folder, str(year))
         os.makedirs(year_folder, exist_ok=True)
-
-        # Define the file name for the PDF
         file_name = f"10K_{filing_date_str}_{accno_str.replace('-', '')}.pdf"
         save_path = os.path.join(year_folder, file_name)
 
         st.write(f"Converting filing from {download_link}")
         download_and_convert_filing(driver, download_link, save_path)
-        time.sleep(2)  # Delay to avoid rapid-fire requests
+        time.sleep(2)  # Delay between requests
 
     driver.quit()
 
@@ -183,7 +187,6 @@ st.markdown("""
 This app downloads 10-K and 10-K/A filings from the SEC website based on a user-defined year range and an Excel file containing company information.
 """)
 
-# Sidebar inputs
 st.sidebar.header("Configuration")
 start_year = st.sidebar.number_input("Start Year", min_value=1900, max_value=datetime.now().year, value=2018, step=1)
 end_year = st.sidebar.number_input("End Year", min_value=1900, max_value=datetime.now().year, value=2020, step=1)
@@ -196,17 +199,14 @@ if st.button("Process Filings"):
     elif start_year > end_year:
         st.error("Start year must be less than or equal to End year.")
     else:
-        # Create a temporary output directory
         output_dir = tempfile.mkdtemp(prefix="sec_filings_")
         st.write(f"Processing filings between {start_year} and {end_year}...")
         process_filings(excel_file, start_year, end_year, output_dir)
 
-        # Zip the output directory for download
         zip_path = os.path.join(output_dir, "sec_filings.zip")
         zip_directory(output_dir, zip_path)
         st.success("Processing complete!")
 
-        # Provide a download button for the zip file
         with open(zip_path, "rb") as f:
             st.download_button(
                 label="Download All PDFs (ZIP)",
