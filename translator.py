@@ -67,12 +67,15 @@ def create_driver():
     options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--user-agent=MSCI EDGAR Scraper (Contact: suren.surya@msci.com)')
     
-    # Specify the binary location for Chromium if necessary.
-    # This is common in Linux/Cloud deployments; adjust the path if needed.
-    options.binary_location = '/usr/bin/chromium-browser'
+    # If necessary, specify the binary location for Chrome/Chromium.
+    # Uncomment the following line if your deployment environment requires it.
+    # options.binary_location = '/usr/bin/chromium-browser'
     
-    # Use WebDriver Manager to automatically download and manage ChromeDriver
-    driver = webdriver.Chrome(ChromeDriverManager().install(), options=options)
+    # Debug: print the ChromeDriver path
+    driver_path = ChromeDriverManager().install()
+    st.write(f"Using ChromeDriver from: {driver_path}")
+    
+    driver = webdriver.Chrome(driver_path, options=options)
     return driver
 
 def download_and_convert_filing(driver, download_link, save_path):
