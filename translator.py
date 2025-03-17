@@ -11,7 +11,11 @@ import zipfile
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
+
+# Fallback: automatically install chromedriver if needed
+import chromedriver_autoinstaller
 
 # ----------------------------------------------
 # Custom User-Agent per SEC rules
@@ -57,26 +61,39 @@ def zero_pad_cik(cik):
 
 def create_driver():
     """
-    Creates and returns a Selenium Chrome WebDriver instance configured for
-    headless operation in containerized environments like Streamlit Cloud.
+    Attempts to create and return a Selenium Chrome WebDriver instance using multiple methods.
+    First it tries using Selenium's Service with webdriver-manager.
+    If that fails, it falls back to using chromedriver_autoinstaller.
     """
     options = Options()
     options.add_argument('--headless')
     options.add_argument('--disable-gpu')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
+    options.add_argument('--remote-debugging-port=9222')
     options.add_argument('--user-agent=MSCI EDGAR Scraper (Contact: suren.surya@msci.com)')
     
-    # If necessary, specify the binary location for Chrome/Chromium.
-    # Uncomment the following line if your deployment environment requires it.
+    # If necessary, set the binary location for Chrome/Chromium.
+    # Uncomment and adjust the following line if your deployment environment requires it.
     # options.binary_location = '/usr/bin/chromium-browser'
     
-    # Debug: print the ChromeDriver path
-    driver_path = ChromeDriverManager().install()
-    st.write(f"Using ChromeDriver from: {driver_path}")
-    
-    driver = webdriver.Chrome(driver_path, options=options)
-    return driver
+    try:
+        st.write("Trying to create Chrome driver using webdriver-manager Service...")
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=options)
+        st.write("Chrome driver successfully launched via webdriver-manager!")
+        return driver
+    except Exception as e:
+        st.error(f"First method failed: {e}. Trying alternative method with chromedriver_autoinstaller...")
+        try:
+            # This will install chromedriver if not already installed and add it to PATH.
+            chromedriver_autoinstaller.install()
+            driver = webdriver.Chrome(options=options)
+            st.write("Chrome driver successfully launched via chromedriver_autoinstaller!")
+            return driver
+        except Exception as e2:
+            st.error(f"Alternative method failed: {e2}")
+            raise Exception("All attempts to create Chrome driver failed.")
 
 def download_and_convert_filing(driver, download_link, save_path):
     """
