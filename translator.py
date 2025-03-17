@@ -1,4 +1,3 @@
-import streamlit as st
 import requests
 import pandas as pd
 from datetime import datetime
@@ -6,8 +5,6 @@ import os
 import re
 import time
 import base64
-import tempfile
-import zipfile
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -15,30 +12,43 @@ from selenium.webdriver.chrome.options import Options
 # ----------------------------------------------
 # Custom User-Agent per SEC rules
 # ----------------------------------------------
+# (Used for SEC JSON fetch requests, not Selenium)
 HEADERS = {
     "User-Agent": "MSCI EDGAR Scraper (Contact: suren.surya@msci.com)"
 }
 
+# Base output directory for saving PDFs
+BASE_OUTPUT_DIR = r"C:\Users\surysur\Downloads"
+
 def sanitize_filename(name):
-    """Remove characters that are not allowed in file/folder names."""
+    """
+    Remove characters that are not allowed in file/folder names.
+    """
     return re.sub(r'[\\/*?:"<>|]', "", name)
 
 def choose_year_range():
     """
-    Use Streamlit's sidebar to let the user choose a start and end year.
+    Prompt the user for a start and end year for 10-K filings.
+    Returns (start_year, end_year) as integers.
     """
-    start_year = st.sidebar.number_input(
-        "Start Year", min_value=1900, max_value=datetime.now().year, value=2018, step=1
-    )
-    end_year = st.sidebar.number_input(
-        "End Year", min_value=1900, max_value=datetime.now().year, value=2020, step=1
-    )
-    return int(start_year), int(end_year)
+    print("\nEnter a start and end year for 10-K filings (e.g., 2018 and 2020):")
+    start_year = input("Start year: ").strip()
+    end_year = input("End year:   ").strip()
+    try:
+        start_year = int(start_year)
+        end_year = int(end_year)
+    except ValueError:
+        print("Invalid input for years. Exiting.")
+        exit(1)
+    return start_year, end_year
 
 def fetch_sec_json(cik_str, max_retries=3, delay=2):
     """
     Given a zero-padded CIK string (e.g., '0001156375'),
     fetch the SEC JSON from the submissions endpoint.
+    Implements a retry mechanism: if a request fails, it will retry
+    up to 'max_retries' times with a delay (in seconds) between attempts.
+    Returns a dict or None if not found.
     """
     base_url = "https://data.sec.gov/submissions/CIK{}.json"
     url = base_url.format(cik_str)
@@ -49,11 +59,12 @@ def fetch_sec_json(cik_str, max_retries=3, delay=2):
             if resp.status_code == 200:
                 return resp.json()
             else:
-                st.warning(f"Attempt {attempt}: CIK JSON fetch returned {resp.status_code} for {url}")
+                print(f"  [WARNING] Attempt {attempt}: CIK JSON fetch returned {resp.status_code} for {url}")
         except Exception as ex:
-            st.warning(f"Attempt {attempt}: Error fetching {url}: {ex}")
+            print(f"  [WARNING] Attempt {attempt}: Error fetching {url}: {ex}")
         
         if attempt < max_retries:
+            print("  [INFO] Retrying...")
             time.sleep(delay)
     
     return None
@@ -70,25 +81,16 @@ def zero_pad_cik(cik):
 
 def create_driver():
     """
-    Creates and returns a Selenium Chrome WebDriver instance configured for headless operation.
-    Container-friendly options (--no-sandbox, --disable-dev-shm-usage) are included.
-    The function now also sets a Chrome binary location if one exists at common paths.
+    Creates and returns a Selenium Chrome WebDriver instance in headless mode,
+    with a custom User-Agent for all browser requests.
     """
     options = Options()
     options.add_argument('--headless')
     options.add_argument('--disable-gpu')
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-dev-shm-usage')
+    # Set your custom User-Agent for Selenium-based traffic:
     options.add_argument('--user-agent=MSCI EDGAR Scraper (Contact: suren.surya@msci.com)')
-    
-    # Automatically set the Chrome binary location if it exists at a common path.
-    if os.path.exists('/usr/bin/chromium-browser'):
-        options.binary_location = '/usr/bin/chromium-browser'
-    elif os.path.exists('/usr/bin/google-chrome'):
-        options.binary_location = '/usr/bin/google-chrome'
-    else:
-        st.error("No Chrome/Chromium binary found at common locations!")
-    
+
+    # If chromedriver is not in PATH, specify the 'executable_path' here:
     driver = webdriver.Chrome(options=options)
     return driver
 
@@ -99,25 +101,28 @@ def download_and_convert_filing(driver, download_link, save_path):
     """
     try:
         driver.get(download_link)
-        time.sleep(3)  # Allow some time for the page to load
+        # Allow some time for the page to load fully.
+        time.sleep(3)
+        # Execute the printToPDF command via Chrome DevTools Protocol.
         pdf = driver.execute_cdp_cmd("Page.printToPDF", {"printBackground": True})
         pdf_data = base64.b64decode(pdf.get("data", ""))
         if pdf_data:
             with open(save_path, "wb") as f:
                 f.write(pdf_data)
-            st.info(f"Saved PDF to {save_path}")
+            print(f"  [SUCCESS] Saved PDF to {save_path}")
         else:
-            st.error(f"No PDF data returned for {download_link}")
+            print(f"  [ERROR] No PDF data returned for {download_link}")
     except Exception as ex:
-        st.error(f"Exception during conversion for {download_link}: {ex}")
+        print(f"  [ERROR] Exception during conversion for {download_link}: {ex}")
 
-def process_filings(excel_data, start_year, end_year, output_dir):
-    """
-    Process the SEC filings from the uploaded Excel file.
-    Iterates through each company, fetches the SEC JSON data, filters 10-K filings
-    within the given year range, and downloads the filings as PDFs.
-    """
-    df = pd.read_excel(excel_data)
+def main():
+    print("Processing only 10-K filings.")
+    start_year, end_year = choose_year_range()
+    print(f"\nFiltering filings from year {start_year} to {end_year} (inclusive).")
+
+    # Load the Excel file with company information
+    input_file = r'C:\Users\surysur\OneDrive\OneDrive - MSCI Office 365\Meetings\10k_pdf.xlsx'
+    df = pd.read_excel(input_file)
     df.columns = df.columns.str.strip()
 
     filings_to_process = []
@@ -127,14 +132,15 @@ def process_filings(excel_data, start_year, end_year, output_dir):
         cik_raw = row.get('CIK', None)
         company_name = row.get('Company Name', 'Unknown')
         if not cik_raw:
-            st.warning(f"Row {idx}: No CIK found for {company_name}. Skipping.")
+            print(f"\nRow {idx}: No CIK found for {company_name}. Skipping.")
             continue
 
         cik_padded = zero_pad_cik(cik_raw)
-        st.write(f"Processing {company_name} (CIK={cik_padded})...")
+        print(f"\nProcessing {company_name} (CIK={cik_padded})...")
+
         sec_data = fetch_sec_json(cik_padded)
         if not sec_data or "filings" not in sec_data or "recent" not in sec_data["filings"]:
-            st.error(f"No filings data found for CIK={cik_padded}")
+            print(f"  [ERROR] No filings data found for CIK={cik_padded}")
             continue
 
         recent = sec_data["filings"]["recent"]
@@ -169,9 +175,10 @@ def process_filings(excel_data, start_year, end_year, output_dir):
             })
 
     if not filings_to_process:
-        st.error("No filings found in the specified year range.")
+        print("No filings found in the specified year range.")
         return
 
+    # Create a Selenium driver instance
     driver = create_driver()
 
     # Process each filing: create appropriate folder structure and save PDF
@@ -183,7 +190,7 @@ def process_filings(excel_data, start_year, end_year, output_dir):
         download_link = filing["download_link"]
 
         # Create company folder
-        company_folder = os.path.join(output_dir, sanitize_filename(company_name))
+        company_folder = os.path.join(BASE_OUTPUT_DIR, sanitize_filename(company_name))
         if not os.path.exists(company_folder):
             os.makedirs(company_folder)
 
@@ -196,55 +203,13 @@ def process_filings(excel_data, start_year, end_year, output_dir):
         file_name = f"10K_{filing_date_str}_{accno_str.replace('-', '')}.pdf"
         save_path = os.path.join(year_folder, file_name)
 
-        st.write(f"Converting filing from {download_link}")
+        print(f"  Converting filing from {download_link}")
         download_and_convert_filing(driver, download_link, save_path)
+
+        # Add a short delay to avoid rapid-fire requests to the SEC
         time.sleep(2)
 
     driver.quit()
 
-def zip_directory(directory_path, zip_path):
-    """Zip the entire directory."""
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-        for root, dirs, files in os.walk(directory_path):
-            for file in files:
-                filepath = os.path.join(root, file)
-                arcname = os.path.relpath(filepath, directory_path)
-                zipf.write(filepath, arcname)
-
-# --- Streamlit App UI ---
-st.title("SEC 10-K Filings Downloader & PDF Converter")
-
-st.markdown("""
-This app downloads 10-K and 10-K/A filings from the SEC website based on a user-defined year range and an uploaded Excel file containing company information.
-""")
-
-# Sidebar inputs for year range
-start_year, end_year = choose_year_range()
-
-# File uploader for the Excel file
-excel_file = st.file_uploader("Upload Excel File (.xlsx)", type=["xlsx"])
-
-if st.button("Process Filings"):
-    if excel_file is None:
-        st.error("Please upload an Excel file before processing.")
-    elif start_year > end_year:
-        st.error("Start year must be less than or equal to End year.")
-    else:
-        # Create a temporary directory for output files
-        output_dir = tempfile.mkdtemp(prefix="sec_filings_")
-        st.write(f"Processing filings between {start_year} and {end_year}...")
-        process_filings(excel_file, start_year, end_year, output_dir)
-
-        # Zip the output directory for download
-        zip_path = os.path.join(output_dir, "sec_filings.zip")
-        zip_directory(output_dir, zip_path)
-        st.success("Processing complete!")
-
-        # Provide a download button for the zip file
-        with open(zip_path, "rb") as f:
-            st.download_button(
-                label="Download All PDFs (ZIP)",
-                data=f,
-                file_name="sec_filings.zip",
-                mime="application/zip"
-            )
+if __name__ == "__main__":
+    main()
