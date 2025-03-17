@@ -11,11 +11,6 @@ import zipfile
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
-
-# Fallback: automatically install chromedriver if needed
-import chromedriver_autoinstaller
 
 # ----------------------------------------------
 # Custom User-Agent per SEC rules
@@ -27,6 +22,18 @@ HEADERS = {
 def sanitize_filename(name):
     """Remove characters that are not allowed in file/folder names."""
     return re.sub(r'[\\/*?:"<>|]', "", name)
+
+def choose_year_range():
+    """
+    Use Streamlit's sidebar to let the user choose a start and end year.
+    """
+    start_year = st.sidebar.number_input(
+        "Start Year", min_value=1900, max_value=datetime.now().year, value=2018, step=1
+    )
+    end_year = st.sidebar.number_input(
+        "End Year", min_value=1900, max_value=datetime.now().year, value=2020, step=1
+    )
+    return int(start_year), int(end_year)
 
 def fetch_sec_json(cik_str, max_retries=3, delay=2):
     """
@@ -52,7 +59,9 @@ def fetch_sec_json(cik_str, max_retries=3, delay=2):
     return None
 
 def zero_pad_cik(cik):
-    """Ensures the CIK is a zero-padded string of length 10."""
+    """
+    Ensures the CIK is a zero-padded string of length 10.
+    """
     try:
         val = int(cik)
         return f"{val:010d}"
@@ -61,39 +70,23 @@ def zero_pad_cik(cik):
 
 def create_driver():
     """
-    Attempts to create and return a Selenium Chrome WebDriver instance using multiple methods.
-    First it tries using Selenium's Service with webdriver-manager.
-    If that fails, it falls back to using chromedriver_autoinstaller.
+    Creates and returns a Selenium Chrome WebDriver instance configured for headless operation.
+    Additional container-friendly options (--no-sandbox, --disable-dev-shm-usage) are added.
+    If your deployment environment requires a specific Chrome/Chromium binary, uncomment and adjust the
+    options.binary_location line.
     """
     options = Options()
     options.add_argument('--headless')
     options.add_argument('--disable-gpu')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
-    options.add_argument('--remote-debugging-port=9222')
     options.add_argument('--user-agent=MSCI EDGAR Scraper (Contact: suren.surya@msci.com)')
     
-    # If necessary, set the binary location for Chrome/Chromium.
-    # Uncomment and adjust the following line if your deployment environment requires it.
+    # Uncomment and adjust the following line if your environment requires a specific binary:
     # options.binary_location = '/usr/bin/chromium-browser'
     
-    try:
-        st.write("Trying to create Chrome driver using webdriver-manager Service...")
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=options)
-        st.write("Chrome driver successfully launched via webdriver-manager!")
-        return driver
-    except Exception as e:
-        st.error(f"First method failed: {e}. Trying alternative method with chromedriver_autoinstaller...")
-        try:
-            # This will install chromedriver if not already installed and add it to PATH.
-            chromedriver_autoinstaller.install()
-            driver = webdriver.Chrome(options=options)
-            st.write("Chrome driver successfully launched via chromedriver_autoinstaller!")
-            return driver
-        except Exception as e2:
-            st.error(f"Alternative method failed: {e2}")
-            raise Exception("All attempts to create Chrome driver failed.")
+    driver = webdriver.Chrome(options=options)
+    return driver
 
 def download_and_convert_filing(driver, download_link, save_path):
     """
@@ -102,25 +95,30 @@ def download_and_convert_filing(driver, download_link, save_path):
     """
     try:
         driver.get(download_link)
-        time.sleep(3)  # Allow time for page to load
+        time.sleep(3)  # Allow some time for the page to load
         pdf = driver.execute_cdp_cmd("Page.printToPDF", {"printBackground": True})
         pdf_data = base64.b64decode(pdf.get("data", ""))
         if pdf_data:
             with open(save_path, "wb") as f:
                 f.write(pdf_data)
-            st.info(f"Saved PDF: {save_path}")
+            st.info(f"Saved PDF to {save_path}")
         else:
             st.error(f"No PDF data returned for {download_link}")
     except Exception as ex:
         st.error(f"Exception during conversion for {download_link}: {ex}")
 
 def process_filings(excel_data, start_year, end_year, output_dir):
-    """Process the SEC filings from the uploaded Excel file."""
+    """
+    Process the SEC filings from the uploaded Excel file.
+    Iterates through each company, fetches the SEC JSON data, filters 10-K filings
+    within the given year range, and downloads the filings as PDFs.
+    """
     df = pd.read_excel(excel_data)
     df.columns = df.columns.str.strip()
 
     filings_to_process = []
 
+    # Iterate over each company in the Excel file
     for idx, row in df.iterrows():
         cik_raw = row.get('CIK', None)
         company_name = row.get('Company Name', 'Unknown')
@@ -141,6 +139,7 @@ def process_filings(excel_data, start_year, end_year, output_dir):
         accno_list   = recent.get("accessionNumber", [])
         primary_docs = recent.get("primaryDocument", [])
 
+        # Filter for 10-K and 10-K/A filings within the specified year range
         for i in range(len(form_list)):
             form_type = form_list[i]
             if form_type not in ["10-K", "10-K/A"]:
@@ -170,6 +169,8 @@ def process_filings(excel_data, start_year, end_year, output_dir):
         return
 
     driver = create_driver()
+
+    # Process each filing: create appropriate folder structure and save PDF
     for filing in filings_to_process:
         company_name = filing["company_name"]
         year = filing["year"]
@@ -177,17 +178,23 @@ def process_filings(excel_data, start_year, end_year, output_dir):
         accno_str = filing["accession_number"]
         download_link = filing["download_link"]
 
-        # Create folder structure
+        # Create company folder
         company_folder = os.path.join(output_dir, sanitize_filename(company_name))
-        os.makedirs(company_folder, exist_ok=True)
+        if not os.path.exists(company_folder):
+            os.makedirs(company_folder)
+
+        # Create year folder inside the company folder
         year_folder = os.path.join(company_folder, str(year))
-        os.makedirs(year_folder, exist_ok=True)
+        if not os.path.exists(year_folder):
+            os.makedirs(year_folder)
+
+        # Define the file name for the PDF
         file_name = f"10K_{filing_date_str}_{accno_str.replace('-', '')}.pdf"
         save_path = os.path.join(year_folder, file_name)
 
         st.write(f"Converting filing from {download_link}")
         download_and_convert_filing(driver, download_link, save_path)
-        time.sleep(2)  # Delay between requests
+        time.sleep(2)
 
     driver.quit()
 
@@ -200,17 +207,17 @@ def zip_directory(directory_path, zip_path):
                 arcname = os.path.relpath(filepath, directory_path)
                 zipf.write(filepath, arcname)
 
-# --- Streamlit App ---
+# --- Streamlit App UI ---
 st.title("SEC 10-K Filings Downloader & PDF Converter")
 
 st.markdown("""
-This app downloads 10-K and 10-K/A filings from the SEC website based on a user-defined year range and an Excel file containing company information.
+This app downloads 10-K and 10-K/A filings from the SEC website based on a user-defined year range and an uploaded Excel file containing company information.
 """)
 
-st.sidebar.header("Configuration")
-start_year = st.sidebar.number_input("Start Year", min_value=1900, max_value=datetime.now().year, value=2018, step=1)
-end_year = st.sidebar.number_input("End Year", min_value=1900, max_value=datetime.now().year, value=2020, step=1)
+# Sidebar inputs for year range
+start_year, end_year = choose_year_range()
 
+# File uploader for the Excel file
 excel_file = st.file_uploader("Upload Excel File (.xlsx)", type=["xlsx"])
 
 if st.button("Process Filings"):
@@ -219,14 +226,17 @@ if st.button("Process Filings"):
     elif start_year > end_year:
         st.error("Start year must be less than or equal to End year.")
     else:
+        # Create a temporary directory for output files
         output_dir = tempfile.mkdtemp(prefix="sec_filings_")
         st.write(f"Processing filings between {start_year} and {end_year}...")
         process_filings(excel_file, start_year, end_year, output_dir)
 
+        # Zip the output directory for download
         zip_path = os.path.join(output_dir, "sec_filings.zip")
         zip_directory(output_dir, zip_path)
         st.success("Processing complete!")
 
+        # Provide a download button for the zip file
         with open(zip_path, "rb") as f:
             st.download_button(
                 label="Download All PDFs (ZIP)",
