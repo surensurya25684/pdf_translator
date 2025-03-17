@@ -1,6 +1,5 @@
-streamlit 
-pdfplumber
-pdf2image
-pytesseract 
-googletrans==4.0.0-rc1 
-reportlab
+streamlit
+pandas
+selenium
+requests
+openpyxl
