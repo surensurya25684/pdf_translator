@@ -71,9 +71,8 @@ def zero_pad_cik(cik):
 def create_driver():
     """
     Creates and returns a Selenium Chrome WebDriver instance configured for headless operation.
-    Additional container-friendly options (--no-sandbox, --disable-dev-shm-usage) are added.
-    If your deployment environment requires a specific Chrome/Chromium binary, uncomment and adjust the
-    options.binary_location line.
+    Container-friendly options (--no-sandbox, --disable-dev-shm-usage) are included.
+    The function now also sets a Chrome binary location if one exists at common paths.
     """
     options = Options()
     options.add_argument('--headless')
@@ -82,8 +81,13 @@ def create_driver():
     options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--user-agent=MSCI EDGAR Scraper (Contact: suren.surya@msci.com)')
     
-    # Uncomment and adjust the following line if your environment requires a specific binary:
-    # options.binary_location = '/usr/bin/chromium-browser'
+    # Automatically set the Chrome binary location if it exists at a common path.
+    if os.path.exists('/usr/bin/chromium-browser'):
+        options.binary_location = '/usr/bin/chromium-browser'
+    elif os.path.exists('/usr/bin/google-chrome'):
+        options.binary_location = '/usr/bin/google-chrome'
+    else:
+        st.error("No Chrome/Chromium binary found at common locations!")
     
     driver = webdriver.Chrome(options=options)
     return driver
